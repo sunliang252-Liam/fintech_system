@@ -1,0 +1,209 @@
+"""
+data_layer/tushare_connector/client.py
+───────────────────────────────────────
+本地 Tushare-like 查询接口，底层读 PostgreSQL，不消耗 Tushare 积分。
+
+用法：
+    from data_layer.tushare_connector import pro_api
+
+    pro = pro_api()
+    df = pro.daily(ts_code="600893.SH", start_date="20240101", end_date="20241231")
+    df = pro.pro_bar(ts_code="600893.SH", adj="qfq")
+    df = pro.stock_basic(list_status="L")
+    df = pro.trade_cal(exchange="SSE", start_date="20240101", end_date="20240131")
+    df = pro.adj_factor(ts_code="600893.SH", start_date="20240101")
+    df = pro.income(ts_code="600893.SH", period="20241231")
+    df = pro.balancesheet(ts_code="600893.SH", period="20241231")
+    df = pro.cashflow(ts_code="600893.SH", period="20241231")
+"""
+
+from __future__ import annotations
+
+from typing import Optional
+
+from . import db
+
+
+class LocalProAPI:
+    """
+    本地 Tushare Pro API。
+    接口签名与 tushare.pro_api() 保持一致，可直接替换。
+
+    数据库表假设：
+        stock_daily      (ts_code, trade_date, open, high, low, close, vol, amount, ...)
+        stock_basic      (ts_code, symbol, name, industry, list_status, list_date, ...)
+        trade_cal        (exchange, cal_date, is_open, pretrade_date)
+        adj_factor       (ts_code, trade_date, adj_factor)
+        income           (ts_code, ann_date, f_ann_date, end_date, period, ...)
+        balance_sheet    (ts_code, ann_date, f_ann_date, end_date, ...)
+        cash_flow        (ts_code, ann_date, f_ann_date, end_date, ...)
+    """
+
+    def __init__(self, **pg_kwargs):
+        self._get_kwargs = pg_kwargs
+
+    def _conn(self):
+        return db.get_conn(**self._pg_kwargs)
+
+    # ── 日线行情（不复权） ────────────────────
+    
+    # ── 复权行情 ──────────────────────────────
+    def pro_bar(
+        self,
+        ts_code: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        adj: Optional[str] = None,
+    ) -> "pd.DataFrame":
+        """
+        adj=None  不复权
+        adj="qfq" 前复权（以最新价为基准）
+        adj="hfq" 后复权（以上市首日为基准）
+        """
+        df = self.daily(ts_code=ts_code, start_date=start_date, end_date=end_date)
+        if df.empty or adj is None:
+            return df
+
+        af = self.adj_factor(ts_code=ts_code, start_date=start_date, end_date=end_date)
+        if af.empty:
+            return df
+
+        df = df.merge(af[["trade_date", "adj_factor"]], on="trade_date", how="left")
+        df["adj_factor"] = df["adj_factor"].fillna(1.0)
+        price_cols = ["open", "high", "low", "close", "pre_close"]
+
+        if adj == "qfq":
+            latest = df["adj_factor"].iloc[-1]
+            for col in price_cols:
+                df[col] = (df[col] * df["adj_factor"] / latest).round(4)
+        elif adj == "hfq":
+            for col in price_cols:
+                df[col] = (df[col] * df["adj_factor"]).round(4)
+
+        return df.drop(columns=["adj_factor"])
+
+    # ── 股票基础信息 ──────────────────────────
+    def stock_basic(
+        self,
+        ts_code: Optional[str] = None,
+        list_status: Optional[str] = None,
+        exchange: Optional[str] = None,
+    ) -> "pd.DataFrame":
+        conds, params = [], []
+        if ts_code:      conds.append("ts_code = %s");      params.append(ts_code)
+        if list_status:  conds.append("list_status = %s");  params.append(list_status)
+        if exchange:     conds.append("exchange = %s");     params.append(exchange)
+
+        where = ("WHERE " + " AND ".join(conds)) if conds else ""
+        sql = f"""
+            SELECT ts_code, symbol, name, area, industry,
+                   list_status, list_date, delist_date, exchange
+            FROM stock_basic {where}
+            ORDER BY ts_code ASC
+        """
+        return db.query(sql, tuple(params), self._conn())
+
+    # ── 交易日历 ──────────────────────────────
+    def trade_cal(
+        self,
+        exchange: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        is_open: Optional[int] = None,
+    ) -> "pd.DataFrame":
+        conds, params = [], []
+        if exchange:    conds.append("exchange = %s");   params.append(exchange)
+        if start_date:  conds.append("cal_date >= %s");  params.append(start_date)
+        if end_date:    conds.append("cal_date <= %s");  params.append(end_date)
+        if is_open is not None:
+            conds.append("is_open = %s"); params.append(is_open)
+
+        where = ("WHERE " + " AND ".join(conds)) if conds else ""
+        sql = f"""
+            SELECT exchange, cal_date, is_open, pretrade_date
+            FROM trade_cal {where}
+            ORDER BY cal_date ASC
+        """
+        return db.query(sql, tuple(params), self._conn())
+
+    # ── 复权因子 ──────────────────────────────
+    def adj_factor(
+        self,
+        ts_code: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        trade_date: Optional[str] = None,
+    ) -> "pd.DataFrame":
+        conds, params = [], []
+        if ts_code:     conds.append("ts_code = %s");      params.append(ts_code)
+        if trade_date:  conds.append("trade_date = %s");   params.append(trade_date)
+        if start_date:  conds.append("trade_date >= %s");  params.append(start_date)
+        if end_date:    conds.append("trade_date <= %s");  params.append(end_date)
+
+        where = ("WHERE " + " AND ".join(conds)) if conds else ""
+        sql = f"""
+            SELECT ts_code, trade_date, adj_factor
+            FROM adj_factor {where}
+            ORDER BY trade_date ASC
+        """
+        return db.query(sql, tuple(params), self._conn())
+
+    # ── 三张财务报表 ──────────────────────────
+    def _financial(
+        self,
+        table: str,
+        ts_code: Optional[str] = None,
+        period: Optional[str] = None,   # 报告期 e.g. "20241231"
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> "pd.DataFrame":
+        """三张表共用的查询逻辑，period 对应 end_date 字段。"""
+        conds, params = [], []
+        if ts_code:     conds.append("ts_code = %s");      params.append(ts_code)
+        if period:      conds.append("end_date = %s");     params.append(period)
+        if start_date:  conds.append("end_date >= %s");    params.append(start_date)
+        if end_date:    conds.append("end_date <= %s");    params.append(end_date)
+
+        where = ("WHERE " + " AND ".join(conds)) if conds else ""
+        sql = f"SELECT * FROM {table} {where} ORDER BY end_date ASC"
+        return db.query(sql, tuple(params), self._conn())
+
+    def income(self, ts_code=None, period=None, start_date=None, end_date=None):
+        """利润表。对应 tushare: pro.income()"""
+        return self._financial("income", ts_code, period, start_date, end_date)
+
+    def balancesheet(self, ts_code=None, period=None, start_date=None, end_date=None):
+        """资产负债表。对应 tushare: pro.balancesheet()"""
+        return self._financial("balance_sheet", ts_code, period, start_date, end_date)
+
+    def cashflow(self, ts_code=None, period=None, start_date=None, end_date=None):
+        """现金流量表。对应 tushare: pro.cashflow()"""
+        return self._financial("cash_flow", ts_code, period, start_date, end_date)
+
+    # ── 通用分发（向下兼容） ──────────────────
+    def query(self, api_name: str, **kwargs) -> "pd.DataFrame":
+        _dispatch = {
+            "daily":       self.daily,
+            "stock_basic": self.stock_basic,
+            "trade_cal":   self.trade_cal,
+            "adj_factor":  self.adj_factor,
+            "income":      self.income,
+            "balancesheet":self.balancesheet,
+            "cashflow":    self.cashflow,
+        }
+        if api_name not in _dispatch:
+            raise ValueError(
+                f"本地 API 暂不支持: {api_name}。"
+                f"已支持: {list(_dispatch)}"
+            )
+        return _dispatch[api_name](**kwargs)
+
+
+def pro_api(**pg_kwargs) -> LocalProAPI:
+    """
+    工厂函数，与 tushare 风格一致。
+
+        from data_layer.tushare_connector import pro_api
+        pro = pro_api()
+    """
+    return LocalProAPI(**pg_kwargs)
