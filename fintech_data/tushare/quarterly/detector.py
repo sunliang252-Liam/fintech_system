@@ -1,11 +1,11 @@
 """tushare/quarterly/detector.py — 检测是否有新年报待拉取"""
 from __future__ import annotations
 from datetime import datetime
-from ..client import ts_post
 from ... import db, logger
 
 log = logger.get("detector")
 
+# 格式 YYYYMMDD，对应 income_statement.end_date
 ANNUAL_PERIOD = f"{datetime.today().year - 1}1231"
 
 
@@ -16,11 +16,11 @@ def get_all_codes(conn) -> list[str]:
 
 
 def get_done_codes(conn, period: str) -> set[str]:
-    year = int(period[:4])
+    """返回 income_statement 里已有指定 end_date 数据的 ts_code 集合。"""
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT DISTINCT ts_code FROM income_statement WHERE report_year = %s",
-            (year,)
+            "SELECT DISTINCT ts_code FROM income_statement WHERE end_date = %s",
+            (period,)
         )
         return {row[0] for row in cur.fetchall()}
 

@@ -2,7 +2,7 @@
 from __future__ import annotations
 import time
 from datetime import datetime
-from .. import config as _cfg
+from ... import config as _cfg
 from ..client import get_pro
 from ... import db, logger
 

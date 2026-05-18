@@ -36,10 +36,11 @@ def upsert(conn, table: str, rows: list[dict], conflict_cols: tuple[str, ...]) -
 
     cols = list(deduped[0].keys())
     vals = [[r[c] for c in cols] for r in deduped]
-    conf = ", ".join(conflict_cols)
-    upd  = ", ".join(f"{c}=EXCLUDED.{c}" for c in cols if c not in conflict_cols)
+    q    = lambda c: f'"{c}"'  # noqa: E731  — quote every identifier
+    conf = ", ".join(q(c) for c in conflict_cols)
+    upd  = ", ".join(f"{q(c)}=EXCLUDED.{q(c)}" for c in cols if c not in conflict_cols)
     sql  = (
-        f"INSERT INTO {table} ({', '.join(cols)}) VALUES %s "
+        f"INSERT INTO {table} ({', '.join(q(c) for c in cols)}) VALUES %s "
         f"ON CONFLICT ({conf}) DO UPDATE SET {upd}"
     )
     with conn.cursor() as cur:
