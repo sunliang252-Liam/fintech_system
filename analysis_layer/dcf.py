@@ -50,19 +50,17 @@ class DCFValuation:
         """从本项目三张财报表中提取数据。"""
         with self.engine.connect() as conn:
             income_df = pd.read_sql(text("""
-                SELECT report_year AS end_date, revenue, net_profit_parent AS n_income_attr_p
+                SELECT end_date, revenue, n_income_attr_p
                 FROM income_statement
                 WHERE ts_code = :code
-                ORDER BY report_year DESC LIMIT :p
+                ORDER BY end_date DESC LIMIT :p
             """), conn, params={"code": self.ts_code, "p": periods})
 
             fcf_df = pd.read_sql(text("""
-                SELECT report_year AS end_date,
-                       operating_cashflow AS n_cashflow_act,
-                       NULL::float        AS free_cashflow
+                SELECT end_date, n_cashflow_act, free_cashflow
                 FROM cash_flow_statement
                 WHERE ts_code = :code
-                ORDER BY report_year DESC LIMIT :p
+                ORDER BY end_date DESC LIMIT :p
             """), conn, params={"code": self.ts_code, "p": periods})
 
         return income_df.fillna(0), fcf_df.fillna(0)
@@ -93,7 +91,7 @@ class DCFValuation:
         if not fcf_df.empty:
             v = fcf_df.iloc[0].get("n_cashflow_act", 0)
             if v and v > 0:
-                base_fcf, fcf_source = v, "经营活动现金流 (operating_cashflow)"
+                base_fcf, fcf_source = v, "经营活动现金流 (n_cashflow_act)"
             else:
                 v2 = fcf_df.iloc[0].get("free_cashflow", 0)
                 if v2 and v2 > 0:
@@ -169,12 +167,16 @@ class DCFValuation:
         # 取资产负债表净债务（最新年）
         with self.engine.connect() as conn:
             bs = pd.read_sql(text("""
-                SELECT cash, short_term_debt, long_term_debt
-                FROM balance_sheet WHERE ts_code=:c ORDER BY report_year DESC LIMIT 1
+                SELECT money_cap, st_borr, lt_borr
+                FROM balance_sheet WHERE ts_code=:c ORDER BY end_date DESC LIMIT 1
             """), conn, params={"c": self.ts_code})
-        cash  = float(bs["cash"].iloc[0] or 0) if not bs.empty else 0
-        debt  = float((bs["short_term_debt"].iloc[0] or 0) +
-                      (bs["long_term_debt"].iloc[0]  or 0)) if not bs.empty else 0
+        if not bs.empty:
+            cash = pd.to_numeric(bs["money_cap"].iloc[0], errors="coerce") or 0
+            st   = pd.to_numeric(bs["st_borr"].iloc[0],   errors="coerce") or 0
+            lt   = pd.to_numeric(bs["lt_borr"].iloc[0],   errors="coerce") or 0
+            debt = st + lt
+        else:
+            cash, debt = 0, 0
 
         # 预测期折现
         pv_sum = sum(

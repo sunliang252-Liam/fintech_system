@@ -148,3 +148,15 @@ _archive/
 data/*.csv
 data/*.pdf
 *.log
+annual_reports/
+
+# 废弃脚本（已迁移或弃用，不纳入版本管理）
+scripts/deepseek_prompt_v2.py
+scripts/parse_reports.py
+scripts/download_missing.py
+scripts/gemini_fin_agent.py
+scripts/test_gemini_hs300.py
+scripts/turshare_600893_to_pg.py
+scripts/progress.json
+scripts/scan_hs300_ma.py
+scripts/README(1).md
