@@ -68,7 +68,6 @@ DB_URL = (
 
 TERMINAL_GROWTH = 0.02
 YEARS           = 5
-DELTA_G         = 0.03   # 情景分析 g 扰动幅度
 
 # ── 行业 WACC（违约 9%，低风险行业 7-8%，高风险行业 10-11%）────────────────
 DEFAULT_WACC = 0.09
@@ -390,19 +389,6 @@ def _ev_to_price(
     return (ev + cash - debt) / (total_shares_wan * 1e4)
 
 
-def _scenario_fvs(
-    base_fcf: float, g: float,
-    cash: float, debt: float, total_shares_wan: float,
-    cap_lo: float, cap_hi: float,
-    wacc: float = DEFAULT_WACC,
-) -> tuple[float | None, float | None]:
-    """悲观/乐观情景价格：g ± DELTA_G，钳位至各方法的 cap_lo / cap_hi。"""
-    g_bear = max(g - DELTA_G, cap_lo)
-    g_bull = min(g + DELTA_G, cap_hi)
-    fv_bear = _ev_to_price(_dcf_ev(base_fcf, g_bear, wacc), cash, debt, total_shares_wan)
-    fv_bull = _ev_to_price(_dcf_ev(base_fcf, g_bull, wacc), cash, debt, total_shares_wan)
-    return fv_bear, fv_bull
-
 
 def _net_cash(bs: pd.Series) -> tuple[float, float]:
     """
@@ -471,7 +457,6 @@ def _pb_roe(
         "roe_pct":        round(roe * 100, 1),
         "book_per_share": round(book_per_share, 2),
         "ev_yi": None, "cash_yi": None, "debt_yi": None,
-        "fair_bear": None, "fair_bull": None,
     }
 
 
@@ -498,14 +483,10 @@ def _dcf_capex(conn, ts_code: str, total_shares_wan: float,
     ev = _dcf_ev(fcf, g, wacc)
     cash, debt = _net_cash(bs)
     fv = _ev_to_price(ev, cash, debt, total_shares_wan)
-    fv_bear, fv_bull = _scenario_fvs(fcf, g, cash, debt, total_shares_wan,
-                                     cap_lo=-0.10, cap_hi=0.20, wacc=wacc)
 
     return {
         "方法":           "DCF(OCF−capex)",
         "fair_per_share": round(fv, 2) if fv is not None else None,
-        "fair_bear":      round(fv_bear, 2) if fv_bear is not None else None,
-        "fair_bull":      round(fv_bull, 2) if fv_bull is not None else None,
         "base_fcf_yi":   round(fcf / 1e8, 2),
         "ocf_raw_yi":    round(ocf_raw / 1e8, 2),
         "growth_rate":   round(g, 4),
@@ -544,14 +525,10 @@ def _dcf_cycle(conn, ts_code: str, total_shares_wan: float,
     ev = _dcf_ev(fcf, g, wacc)
     cash, debt = _net_cash(bs)
     fv = _ev_to_price(ev, cash, debt, total_shares_wan)
-    fv_bear, fv_bull = _scenario_fvs(fcf, g, cash, debt, total_shares_wan,
-                                     cap_lo=-0.05, cap_hi=0.12, wacc=wacc)
 
     return {
         "方法":           f"穿越周期DCF(n={len(fcf_list)}年均值)",
         "fair_per_share": round(fv, 2) if fv is not None else None,
-        "fair_bear":      round(fv_bear, 2) if fv_bear is not None else None,
-        "fair_bull":      round(fv_bull, 2) if fv_bull is not None else None,
         "base_fcf_yi":   round(fcf / 1e8, 2),
         "ocf_raw_yi":    round(ocf_raw / 1e8, 2),
         "growth_rate":   round(g, 4),
@@ -585,14 +562,10 @@ def _dcf_std(conn, ts_code: str, total_shares_wan: float,
     ev = _dcf_ev(fcf, g, wacc)
     cash, debt = _net_cash(bs)
     fv = _ev_to_price(ev, cash, debt, total_shares_wan)
-    fv_bear, fv_bull = _scenario_fvs(fcf, g, cash, debt, total_shares_wan,
-                                     cap_lo=-0.10, cap_hi=0.20, wacc=wacc)
 
     return {
         "方法":           "标准DCF",
         "fair_per_share": round(fv, 2) if fv is not None else None,
-        "fair_bear":      round(fv_bear, 2) if fv_bear is not None else None,
-        "fair_bull":      round(fv_bull, 2) if fv_bull is not None else None,
         "base_fcf_yi":   round(fcf / 1e8, 2),
         "ocf_raw_yi":    round(ocf_raw / 1e8, 2),
         "growth_rate":   round(g, 4),
@@ -639,7 +612,6 @@ def _pe_consumer(
         "growth_rate":   growth_rate,
         "ev_yi": None, "cash_yi": None, "debt_yi": None,
         "fair_pb": None, "cur_pb": None, "roe_pct": None, "book_per_share": None,
-        "fair_bear": None, "fair_bull": None,
     }
 
 
@@ -666,14 +638,10 @@ def _dcf_pharma(conn, ts_code: str, total_shares_wan: float,
     ev = _dcf_ev(fcf, g, wacc)
     cash, debt = _net_cash(bs)
     fv = _ev_to_price(ev, cash, debt, total_shares_wan)
-    fv_bear, fv_bull = _scenario_fvs(fcf, g, cash, debt, total_shares_wan,
-                                     cap_lo=-0.10, cap_hi=0.18, wacc=wacc)
 
     return {
         "方法":           "DCF医药(g≤18%)",
         "fair_per_share": round(fv, 2) if fv is not None else None,
-        "fair_bear":      round(fv_bear, 2) if fv_bear is not None else None,
-        "fair_bull":      round(fv_bull, 2) if fv_bull is not None else None,
         "base_fcf_yi":   round(fcf / 1e8, 2),
         "ocf_raw_yi":    round(ocf_raw / 1e8, 2),
         "growth_rate":   round(g, 4),
@@ -712,7 +680,6 @@ def _ps_biotech(
         "growth_rate":   growth_rate,
         "ev_yi": None, "cash_yi": None, "debt_yi": None,
         "fair_pb": None, "cur_pb": None, "roe_pct": None, "book_per_share": None,
-        "fair_bear": None, "fair_bull": None,
     }
 
 
@@ -744,14 +711,10 @@ def _dcf_cycle_soft(conn, ts_code: str, total_shares_wan: float,
     ev = _dcf_ev(fcf, g, wacc)
     cash, debt = _net_cash(bs)
     fv = _ev_to_price(ev, cash, debt, total_shares_wan)
-    fv_bear, fv_bull = _scenario_fvs(fcf, g, cash, debt, total_shares_wan,
-                                     cap_lo=-0.08, cap_hi=0.15, wacc=wacc)
 
     return {
         "方法":           f"软周期DCF(n={len(fcf_list)}年均值)",
         "fair_per_share": round(fv, 2) if fv is not None else None,
-        "fair_bear":      round(fv_bear, 2) if fv_bear is not None else None,
-        "fair_bull":      round(fv_bull, 2) if fv_bull is not None else None,
         "base_fcf_yi":   round(fcf / 1e8, 2),
         "ocf_raw_yi":    round(ocf_raw / 1e8, 2),
         "growth_rate":   round(g, 4),
@@ -839,6 +802,48 @@ def load_market_data(engine) -> tuple[dict, dict]:
 def load_stock_info(engine) -> dict:
     with engine.connect() as conn:
         df = pd.read_sql(text("SELECT ts_code, name, industry FROM stock_basic"), conn)
+    return {row["ts_code"]: row for row in df.to_dict("records")}
+
+
+def implied_growth_rate(market_cap_yi: float, base_fcf: float,
+                        wacc: float = DEFAULT_WACC,
+                        terminal_growth: float = TERMINAL_GROWTH,
+                        years: int = YEARS) -> float | None:
+    """给定市值（亿）和基准FCF（元），二分法反推市场隐含年化增长率。"""
+    if base_fcf <= 0:
+        return None
+    target = market_cap_yi * 1e8
+    low, high = -0.5, 1.0
+    for _ in range(100):
+        mid = (low + high) / 2
+        rate = max(mid, -0.99)
+        fcfs = [base_fcf * ((1 + rate) ** i) for i in range(1, years + 1)]
+        discounted = [f / ((1 + wacc) ** i) for i, f in enumerate(fcfs, 1)]
+        tv = (fcfs[-1] * (1 + terminal_growth)) / (wacc - terminal_growth)
+        ev = sum(discounted) + tv / ((1 + wacc) ** years)
+        if ev < target:
+            low = mid
+        else:
+            high = mid
+    return mid
+
+
+def load_report_metrics(engine) -> dict:
+    """读取 report_metrics 表，按 ts_code 索引，取最新 report_year。"""
+    with engine.connect() as conn:
+        df = pd.read_sql(text("""
+            SELECT DISTINCT ON (ts_code)
+                ts_code, report_year,
+                revenue_growth, revenue_conf,
+                net_profit,     net_conf,
+                ocf_change,     ocf_conf,
+                overall_conf,   profit_sustainability,
+                cashflow_risk,  data_credibility,
+                core_risk,      key_contradiction
+            FROM report_metrics
+            WHERE ts_code IS NOT NULL
+            ORDER BY ts_code, report_year DESC
+        """), conn)
     return {row["ts_code"]: row for row in df.to_dict("records")}
 
 
@@ -989,7 +994,7 @@ def _write_legend(f, n_results: int) -> None:
         f"## HS300 全行业细分估值  生成时间: {ts}  共 {n_results} 只",
         "##",
         "## ── 全局参数 ──────────────────────────────────────────────────────────────",
-        f"## WACC={WACC:.0%}  终值增长率={TERMINAL_GROWTH:.0%}  预测期={YEARS}年"
+        f"## WACC={DEFAULT_WACC:.0%}  终值增长率={TERMINAL_GROWTH:.0%}  预测期={YEARS}年"
         f"  成长溢价阈值={GROWTH_PREMIUM_THRESHOLD:.0f}x（市值/FCF超此值触发标记）",
         "##",
         "## ── 估值方法说明 ───────────────────────────────────────────────────────────",
@@ -1061,10 +1066,14 @@ if __name__ == "__main__":
 
     log.info("3. 读取沪深 300 成分股名单...")
     codes = load_hs300_codes(db)
-    log.info(f"   共 {len(codes)} 只\n")
+    log.info(f"   共 {len(codes)} 只")
+
+    log.info("4. 读取年报 AI 指标（report_metrics）...")
+    report_metrics = load_report_metrics(db)
+    log.info(f"   共 {len(report_metrics)} 只\n")
 
     # ── 批量估值 ────────────────────────────────────────────────────────────
-    log.info("4. 批量估值中...\n")
+    log.info("5. 批量估值中...\n")
     engine  = UnifiedValuation(DB_URL)
     results = []
     skipped = {"无行情": 0, "估值失败": 0}
@@ -1106,6 +1115,15 @@ if __name__ == "__main__":
                 f" | {quantifiable_risk}" if quantifiable_risk else ""
             )
 
+        # 市场隐含增长率（反推）
+        wacc = INDUSTRY_WACC.get(industry, DEFAULT_WACC)
+        base_fcf_yuan = (r.get("base_fcf_yi") or 0) * 1e8
+        imp_g = implied_growth_rate(mc_yi, base_fcf_yuan, wacc)
+        imp_g_pct = round(imp_g * 100, 1) if imp_g is not None else None
+
+        # 年报 AI 指标
+        rm = report_metrics.get(code, {})
+
         results.append({
             "ts_code":        code,
             "名称":           name,
@@ -1113,14 +1131,12 @@ if __name__ == "__main__":
             "估值方法":       r["方法"],
             "当前价":         price,
             "估值":           fv,
-            "估值_悲观":      r.get("fair_bear"),
-            "估值_中性":      fv,
-            "估值_乐观":      r.get("fair_bull"),
             "空间%":          gap,
             "市值亿":         mc_yi,
             "基准FCF/净利亿": r.get("base_fcf_yi"),
             "原始OCF亿":      r.get("ocf_raw_yi"),
-            "增长率%":        round(r["growth_rate"] * 100, 1) if r.get("growth_rate") is not None else None,
+            "DCF增长率%":     round(r["growth_rate"] * 100, 1) if r.get("growth_rate") is not None else None,
+            "市场隐含增长率%": imp_g_pct,
             "EV亿":           r.get("ev_yi"),
             "有息债务亿":     r.get("debt_yi"),
             "现金及理财亿":   r.get("cash_yi"),
@@ -1133,6 +1149,19 @@ if __name__ == "__main__":
             "每股净资产":     r.get("book_per_share"),
             "可识别风险":     quantifiable_risk,
             "不可量化提示":   unquantifiable_risk,
+            # ── 年报 AI 指标 ──────────────────────────────────────────────
+            "年报营收增速":   rm.get("revenue_growth"),
+            "营收置信度":     rm.get("revenue_conf"),
+            "年报净利变化":   rm.get("net_profit"),
+            "净利置信度":     rm.get("net_conf"),
+            "年报OCF变化":    rm.get("ocf_change"),
+            "OCF置信度":      rm.get("ocf_conf"),
+            "综合置信度":     rm.get("overall_conf"),
+            "利润可持续性":   rm.get("profit_sustainability"),
+            "现金流风险":     rm.get("cashflow_risk"),
+            "数据可信度":     rm.get("data_credibility"),
+            "核心风险":       rm.get("core_risk"),
+            "关键矛盾":       rm.get("key_contradiction"),
         })
 
         gap_str  = f"{gap:+.1f}%" if gap is not None else "  N/A"

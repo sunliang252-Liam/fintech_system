@@ -147,6 +147,7 @@ config/.env
 _archive/
 data/*.csv
 data/*.pdf
+data/*.dump
 *.log
 annual_reports/
 
